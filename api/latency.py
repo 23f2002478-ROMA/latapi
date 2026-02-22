@@ -1,18 +1,14 @@
 import json
-import numpy as np
-from http.server import BaseHTTPRequestHandler
 
 with open("q-vercel-latency.json") as f:
     records = json.load(f)
 
-class handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        content_length = int(self.headers['Content-Length'])
-        body = self.rfile.read(content_length)
-        request = json.loads(body)
+def handler(request):
+    try:
+        body = json.loads(request.body.decode())
 
-        regions = request["regions"]
-        threshold = request["threshold_ms"]
+        regions = body.get("regions", [])
+        threshold = body.get("threshold_ms", 0)
 
         result = {}
 
@@ -22,9 +18,14 @@ class handler(BaseHTTPRequestHandler):
             latencies = [r["latency_ms"] for r in subset]
             uptimes = [r["uptime"] for r in subset]
 
-            avg_latency = float(np.mean(latencies)) if latencies else 0
-            p95_latency = float(np.percentile(latencies, 95)) if latencies else 0
-            avg_uptime = float(np.mean(uptimes)) if uptimes else 0
+            if latencies:
+                avg_latency = sum(latencies)/len(latencies)
+                p95_latency = sorted(latencies)[int(0.95*len(latencies))-1]
+            else:
+                avg_latency = 0
+                p95_latency = 0
+
+            avg_uptime = sum(uptimes)/len(uptimes) if uptimes else 0
             breaches = sum(l > threshold for l in latencies)
 
             result[region] = {
@@ -34,10 +35,14 @@ class handler(BaseHTTPRequestHandler):
                 "breaches": breaches
             }
 
-        self.send_response(200)
-        self.send_header("Content-Type","application/json")
-        self.send_header("Access-Control-Allow-Origin","*")
-        self.send_header("Access-Control-Allow-Methods","POST")
-        self.end_headers()
+        return {
+            "statusCode": 200,
+            "body": json.dumps(result),
+            "headers": {"Content-Type": "application/json"}
+        }
 
-        self.wfile.write(json.dumps(result).encode())
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "body": str(e)
+        }
